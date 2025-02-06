@@ -221,6 +221,8 @@ generate_new_config() {
 }
 
 # 修改 Cursor 主程序文件
+
+# 修改 Cursor 主程序文件
 modify_cursor_app_files() {
     log_info "正在修改 Cursor 主程序文件..."
     
@@ -246,61 +248,40 @@ modify_cursor_app_files() {
             log_debug "备份已存在: $backup_file"
         fi
         
-        # 创建临时文件
-        local temp_file=$(mktemp)
-        
         # 读取文件内容
-        local content=$(<"$file")
+        local content
+        content=$(cat "$file") || {
+            log_error "无法读取文件: $file"
+            continue
+        }
         
-        # 查找关键位置
-        local uuid_pattern="IOPlatformUUID"
-        if ! echo "$content" | grep -q "$uuid_pattern"; then
-            log_warn "在文件 $file 中未找到 $uuid_pattern"
-            rm -f "$temp_file"
+        # 查找 IOPlatformUUID 位置
+        local uuid_pos
+        uuid_pos=$(printf "%s" "$content" | grep -b -o "IOPlatformUUID" | cut -d: -f1)
+        if [ -z "$uuid_pos" ]; then
+            log_warn "未找到 IOPlatformUUID: $file"
             continue
         fi
         
-        # 构建替换内容
-        local replacement='case "IOPlatformUUID": return crypto.randomUUID();'
-        
-        # 使用 sed 进行替换
-        if ! sed -E "s/(case \"IOPlatformUUID\":)[^}]+}/\1 return crypto.randomUUID();/" "$file" > "$temp_file"; then
-            log_error "处理文件内容失败: $file"
-            rm -f "$temp_file"
+        # 从 UUID 位置向前查找 switch
+        local before_uuid="${content:0:$uuid_pos}"
+        local switch_pos
+        switch_pos=$(printf "%s" "$before_uuid" | grep -b -o "switch" | tail -n1 | cut -d: -f1)
+        if [ -z "$switch_pos" ]; then
+            log_warn "未找到 switch 关键字: $file"
             continue
         fi
         
-        # 验证临时文件
-        if [ ! -s "$temp_file" ]; then
-            log_error "生成的文件为空: $file"
-            rm -f "$temp_file"
+        # 构建新的文件内容
+        printf "%sreturn crypto.randomUUID();\n%s" "${content:0:$switch_pos}" "${content:$switch_pos}" > "$file" || {
+            log_error "无法写入文件: $file"
             continue
-        fi
+        }
         
-        # # 验证文件内容是否包含必要的代码
-        # log_debug "正在验证文件内容..."
-        # if ! grep -q "crypto\s*\.\s*randomUUID\s*(" "$temp_file"; then
-        #     log_debug "文件内容预览："
-        #     head -n 20 "$temp_file" | log_debug
-        #     log_error "修改后的文件缺少必要的代码: $file"
-        #     rm -f "$temp_file"
-        #     continue
-        # fi
-        
-        #log_debug "文件验证通过"
-        
-        # 替换原文件
-        if ! mv "$temp_file" "$file"; then
-            log_error "无法更新文件: $file"
-            rm -f "$temp_file"
-            continue
-        fi
-        
-        # 设置权限
         chmod 644 "$file"
         chown "$CURRENT_USER" "$file"
         
-        log_info "成功修改文件: $file 请重启Cursor，如果重启后无法打开或者报异常，请重新安装Cursor"
+        log_info "成功修改文件: $file"
     done
 }
 
